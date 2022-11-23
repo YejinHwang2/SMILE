@@ -299,7 +299,7 @@ class MetaModel(nn.Module):
         # s_z: False | z_prime = True
 
         # inner adaptation to z
-        inner_optimizer = torch.optim.SGD([z_prime], lr=float(self.inner_lr))
+        inner_optimizer = torch.optim.Adam([z_prime], lr=float(self.inner_lr))
         # inner_scheduler = torch.optim.lr_scheduler.ExponentialLR(inner_optimizer, gamma=self.inner_lr_schedular_gamma)
         # inner_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         #     inner_optimizer, T_0=math.floor(n_inner_step/4), T_mult=2, eta_min=0.001)
