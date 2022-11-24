@@ -70,6 +70,7 @@ class MetaModel(nn.Module):
             self, 
             feature_size: int, 
             embed_size: int,
+            hidden_size: int, 
             n_classes: int,  # only should be number of classes
             num_layers: int, 
             drop_rate: float, 
@@ -81,7 +82,7 @@ class MetaModel(nn.Module):
         super().__init__()
         self.embed_size = embed_size
         self.output_size = n_classes
-        
+        self.hidden_size = hidden_size
         self.inner_lr = nn.Parameter(torch.FloatTensor([inner_lr_init])) # inner_lr_init
         # self.inner_lr_schedular_gamma = inner_lr_schedular_gamma
         self.param_l2_lambda = param_l2_lambda
@@ -90,10 +91,9 @@ class MetaModel(nn.Module):
         self.lstm_encoder = LSTMAttention(input_size=feature_size, hidden_size=embed_size, num_layers=num_layers)
         self.layer_norm = nn.LayerNorm(embed_size)
         self.encoder = nn.Sequential(
-            nn.Linear(embed_size, 2*embed_size),
-            nn.ELU()
+            nn.Linear(embed_size, hidden_size)
         )
-        # self.relation_net = RelationNet(hidden_size)
+        self.relation_net = RelationNet(hidden_size)
         self.decoder = nn.Linear(embed_size, 2*embed_size, bias=False)
 
         # Loss
@@ -191,10 +191,10 @@ class MetaModel(nn.Module):
             l_reshape = l.view(B, N, K, -1)  # l_reshape: (B, N, K, E)
             # -----------------------------
             # Encoder-to-z
-            e = self.encoder(l_reshape)  # e: (B, N, K, 2E)
-            # hs = self.relation_net(e)  # hs: (B, N, 2H)
+            e = self.encoder(l_reshape)  # e: (B, N, K, H)
+            hs = self.relation_net(e)  # hs: (B, N, 2H)
             # -----------------------------
-            hs = e.mean(2)  # hs: (B, N, 2E)
+            # hs = e.mean(2)  # hs: (B, N, 2E)
             z, kld_loss = self.sample(hs, size=self.embed_size)  # z: (B, N, E)
             return l, z, kld_loss, attn
         else:
@@ -287,7 +287,7 @@ class MetaModel(nn.Module):
         s_l, s_z, kld_loss, s_attn = self.forward_encoder(s_inputs, rt_attn=rt_attn)
 
         # initialize z', Forward Decoder
-        z_prime = s_z.detach()
+        z_prime = s_z
         z_prime.requires_grad_(True)
         s_pred_loss, s_param_l2_loss, s_preds, parameters = self.forward_decoder(z=z_prime, l=s_l, labels=s_labels)
         s_loss = s_pred_loss + self.param_l2_lambda * s_param_l2_loss
@@ -299,17 +299,19 @@ class MetaModel(nn.Module):
         # s_z: False | z_prime = True
 
         # inner adaptation to z
-        inner_optimizer = torch.optim.Adam([z_prime], lr=float(self.inner_lr))
+        # inner_optimizer = torch.optim.Adam([z_prime], lr=float(self.inner_lr))
         # inner_scheduler = torch.optim.lr_scheduler.ExponentialLR(inner_optimizer, gamma=self.inner_lr_schedular_gamma)
         # inner_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         #     inner_optimizer, T_0=math.floor(n_inner_step/4), T_mult=2, eta_min=0.001)
         for i in range(n_inner_step):
-            inner_optimizer.zero_grad()
+            # inner_optimizer.zero_grad()
             # equal to: z_prime.retain_grad()
+            z_prime.retain_grad()
             s_loss.backward(retain_graph=True)
-            inner_optimizer.step()
+            # inner_optimizer.step()
             # inner_scheduler.step()
             # similar to: z_prime = z_prime - scheduler(self.inner_lr) * z_prime.grad.data
+            z_prime = z_prime - self.inner_lr * z_prime.grad.data
             s_pred_loss, s_param_l2_loss, s_preds, parameters = self.forward_decoder(z=z_prime, l=s_l, labels=s_labels)
             s_loss = s_pred_loss + self.param_l2_lambda * s_param_l2_loss
 
